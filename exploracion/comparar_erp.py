@@ -1,7 +1,8 @@
 """Compara el potencial evocado en Cz de NUESTRO pipeline (desde el crudo) con el de los autores.
 
 Uso (desde la raiz del repo, con el venv activo; el canal es opcional, por defecto Cz):
-    python procesamiento/comparar_erp.py sub-001 Fp1
+    python procesamiento/comparar_erp.py sub-001 Fp1 laser_ica
+(argumentos: sujeto, canal, sufijo del archivo; "laser" = sin ICA, "laser_ica" = con ICA)
 Requiere haber corrido antes extract_laser_epochs.py para ese sujeto.
 Sin probar sobre los datos reales: revisar la salida.
 """
@@ -13,14 +14,19 @@ import mne
 import numpy as np
 
 sub = sys.argv[1] if len(sys.argv) > 1 else "sub-001"
-canal = sys.argv[2] if len(sys.argv) > 2 else "AF3"  # ej. Cz, Fp1, AF3
+canal = sys.argv[2] if len(sys.argv) > 2 else "Fp1"  # ej. Cz, Fp1, AF3
+sufijo = sys.argv[3] if len(sys.argv) > 3 else "laser"  # "laser" = sin ICA, "laser_ica" = con ICA
 
 # Nuestras epocas: 1-100 Hz, notch 48-52 Hz, referencia a la nariz, sin ICA
-ours = mne.read_epochs(f"data/derived_mine/{sub}_laser-epo.fif", verbose="ERROR")
+ours = mne.read_epochs(f"data/derived_mine/{sub}_{sufijo}-epo.fif", verbose="ERROR")
 # Epocas de los autores: post-ICA, referencia al promedio, pasabajos 30 Hz
 theirs = mne.read_epochs_eeglab(
     f"data/ds005293/derivatives/rerefer/{sub}_95ByBP.set", verbose="ERROR")
 theirs.apply_baseline((-1.0, 0.0), verbose="ERROR")
+# v2 baja a 250 Hz y los derivados de los autores estan a 1000 Hz: los igualamos
+# (ya vienen con pasabajos de 30 Hz, asi que reducir la frecuencia no pierde nada)
+if theirs.info["sfreq"] != ours.info["sfreq"]:
+    theirs.resample(ours.info["sfreq"], verbose="ERROR")
 
 # Para comparar en igualdad de condiciones, llevamos las nuestras a lo que hicieron ellos:
 # referencia al promedio y pasabajos 30 Hz (solo para esta comparacion)
@@ -45,7 +51,7 @@ for ax, k in zip(axes, (1, 2, 3, 4)):
     print(f"E{k}: correlacion de las curvas 0-0.8 s = {r:.2f}")
 axes[0].set_ylabel(f"{canal} (uV)")
 axes[0].legend()
-fig.suptitle(f"{sub}: potencial evocado en {canal}, nuestro pipeline vs autores")
+fig.suptitle(f"{sub}: potencial evocado en {canal}, nuestro pipeline ({sufijo}) vs autores")
 out = Path("data/derived_mine")
-fig.savefig(out / f"{sub}_comparacion_erp_{canal}.png", dpi=150, bbox_inches="tight")
+fig.savefig(out / f"{sub}_comparacion_erp_{canal}_{sufijo}.png", dpi=150, bbox_inches="tight")
 plt.show()

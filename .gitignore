@@ -4,3 +4,10 @@ __pycache__/
 **/.DS_Store
 .ipynb_checkpoints/
 .venv/
+data/
+derivatives/
+*.fif
+*.eeg
+*.fdt
+.venv/
+__pycache__/
