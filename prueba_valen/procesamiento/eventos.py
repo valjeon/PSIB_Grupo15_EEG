@@ -8,7 +8,7 @@ import warnings
 import mne
 import numpy as np
 
-from .. import config
+from procesamiento import config
 
 
 def eventos_laser(events, codigos=None, confirmacion=None):

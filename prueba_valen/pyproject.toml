@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "procesamiento"
+version = "0.1.0"
+description = "Preprocesamiento de EEG con potenciales evocados por laser (OpenNeuro ds005293)"
+requires-python = ">=3.11"
+dependencies = ["mne>=1.13", "numpy", "scipy", "matplotlib", "scikit-learn", "pandas"]
+
+[project.optional-dependencies]
+dev = ["pytest", "pybv"]
+
+[tool.setuptools.packages.find]
+include = ["procesamiento*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import mne
 
-from . import config
+from procesamiento import config
 
 
 def listar_sujetos(raiz=None):

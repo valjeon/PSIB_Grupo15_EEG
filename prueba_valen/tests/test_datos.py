@@ -51,3 +51,15 @@ def test_de_punta_a_punta_con_eventos(raiz):
     assert nombres == ["ses-2", "ses-10"]
     assert eventos.pulsos_laser(raws[0])[:, 2].tolist() == [2]
     assert eventos.pulsos_laser(raws[1])[:, 2].tolist() == [1, 4]
+
+
+def test_verificar_cli(raiz, monkeypatch, capsys):
+    from procesamiento import verificar
+    monkeypatch.setattr(config, "RAIZ_DATOS", raiz)
+    assert verificar.main(["sub-001"]) == 1  # solo 3 pulsos: no coincide con 20 por nivel
+    assert "NO COINCIDE" in capsys.readouterr().out
+
+
+def test_config_respeta_variable_de_entorno(tmp_path, monkeypatch):
+    monkeypatch.setenv("PSIB_DATOS", str(tmp_path))
+    assert config._buscar_datos() == tmp_path

@@ -1,7 +1,24 @@
 """Constantes del proyecto. Todo lo que se pueda querer cambiar vive aca, no en las funciones."""
+import os
+from pathlib import Path
 
-RAIZ_DATOS = "data/ds005293"        # donde descargar_sujeto.sh deja el dataset
-CARPETA_SALIDA = "data/derived_mine"  # resultados intermedios (epocas, figuras)
+
+
+def _buscar_datos():
+    """Carpeta del dataset. Orden: variable PSIB_DATOS, luego data/ds005293 en la carpeta
+    actual o en cualquier carpeta por encima del paquete; si no hay, data/ds005293 de la actual."""
+    env = os.environ.get("PSIB_DATOS")
+    if env:
+        return Path(env)
+    for base in [Path.cwd(), *Path(__file__).resolve().parents]:
+        candidata = base / "data" / "ds005293"
+        if candidata.is_dir():
+            return candidata
+    return Path("data") / "ds005293"
+
+
+RAIZ_DATOS = _buscar_datos()                        # donde descargar_sujeto deja el dataset
+CARPETA_SALIDA = RAIZ_DATOS.parent / "derived_mine"  # resultados intermedios (epocas, figuras)
 
 TAREA = "95ByBP"                    # nombre de la tarea en los archivos BIDS
 
