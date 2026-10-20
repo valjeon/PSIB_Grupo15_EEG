@@ -7,7 +7,6 @@ import re
 from pathlib import Path
 
 import mne
-
 from . import config
 
 
