@@ -4,12 +4,9 @@ Funciones puras sobre arreglos de MNE (muestra, 0, codigo): no leen archivos,
 asi se prueban sin datos reales.
 """
 import warnings
-
 import mne
 import numpy as np
-
-from . import config
-
+from procesamiento import config
 
 def eventos_laser(events, codigos=None, confirmacion=None):
     """Devuelve [[muestra, 0, nivel]] para cada trigger S3x seguido inmediatamente de S100.

@@ -2,15 +2,21 @@
 import os
 from pathlib import Path
 
-# --- Rutas -------------------------------------------------------------------
-# Absolutas a partir de la ubicacion de este archivo, asi el codigo corre igual
-# desde cualquier carpeta. Estructura asumida:
-#   <repo>/data/ds005293/...            (datos crudos)
-#   <repo>/<carpeta>/procesamiento/config.py
-# Si en alguna compu el dataset esta en otro lado: export TP_RAIZ_DATOS=/ruta/al/ds005293
-RAIZ_PROYECTO = Path(__file__).resolve().parents[2]
-RAIZ_DATOS = Path(os.environ.get("TP_RAIZ_DATOS", RAIZ_PROYECTO / "data" / "ds005293"))
-CARPETA_SALIDA = Path(os.environ.get("TP_SALIDA", RAIZ_PROYECTO / "data" / "derived_mine"))
+def _buscar_datos():
+    """Carpeta del dataset. Orden: variable PSIB_DATOS, luego data/ds005293 en la carpeta
+    actual o en cualquier carpeta por encima del paquete; si no hay, data/ds005293 de la actual."""
+    env = os.environ.get("PSIB_DATOS")
+    if env:
+        return Path(env)
+    for base in [Path.cwd(), *Path(__file__).resolve().parents]:
+        candidata = base / "data" / "ds005293"
+        if candidata.is_dir():
+            return candidata
+    return Path("data") / "ds005293"
+
+
+RAIZ_DATOS = _buscar_datos()                        # donde descargar_sujeto deja el dataset
+CARPETA_SALIDA = RAIZ_DATOS.parent / "derived_mine"  # resultados intermedios (epocas, figuras)
 
 TAREA = "95ByBP"                    # nombre de la tarea en los archivos BIDS
 

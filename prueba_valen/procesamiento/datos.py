@@ -7,8 +7,7 @@ import re
 from pathlib import Path
 
 import mne
-from . import config
-
+from procesamiento import config
 
 def listar_sujetos(raiz=None):
     """IDs de sujetos que tienen al menos un registro crudo descargado, ej. ['sub-001', 'sub-004']."""
