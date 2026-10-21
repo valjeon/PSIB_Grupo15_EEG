@@ -59,6 +59,10 @@ def graficar(raws_por_sesion, canales, ruta):
     for nombre, raw in raws_por_sesion.items():
         f, p, _ = calcular_psd(raw, fmax=min(200.0, raw.info["sfreq"] / 2 - 1))
         ax[0].plot(f, 10 * np.log10(p.mean(axis=0)), lw=1, label=nombre)
+
+        #p.mean hace el promedio entre canales y frecuencia por frecuencia
+        # Con 10*np.log10() se pasa de µV²/Hz a dB
+        
     primera = next(iter(raws_por_sesion.values()))
     f, p, nombres = calcular_psd(primera, fmax=min(200.0, primera.info["sfreq"] / 2 - 1))
     for c in canales:
