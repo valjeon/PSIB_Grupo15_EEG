@@ -165,9 +165,8 @@ def tabla_resumen(evs, ptp, meta):
                       "ptp_mediana_uV": float(np.median(ptp[m]))})
     return pd.DataFrame(filas).round(1)
 
-
-def correr_qc(ep, sub, carpeta=None):
-    carpeta = Path(config.CARPETA_SALIDA if carpeta is None else carpeta) / sub / "qc"
+def correr_qc(ep, sub, carpeta=None, subcarpeta="qc"):
+    carpeta = Path(config.CARPETA_SALIDA if carpeta is None else carpeta) / sub / subcarpeta
     carpeta.mkdir(parents=True, exist_ok=True)
     meta = ep.metadata.reset_index(drop=True)
 
@@ -204,8 +203,14 @@ def main(argv=None):
     p.add_argument("sujeto")
     p.add_argument("--sesiones", nargs="*", help="solo estas sesiones, ej. ses-1")
     p.add_argument("--rehacer", action="store_true", help="volver a segmentar aunque exista el .fif")
+    p.add_argument("--etapa", choices=["crudas", "limpias"], default="crudas")
     a = p.parse_args(argv)
-    matplotlib.use("Agg")                       # guardar PNG sin abrir ventanas
+    matplotlib.use("Agg") 
+    if a.etapa == "limpias":
+        ruta = segmentacion.ruta_epocas(a.sujeto).with_name(f"{a.sujeto}_limpias-epo.fif")
+        print(f"Leyendo {ruta}")
+        correr_qc(mne.read_epochs(ruta, verbose="ERROR"), a.sujeto, subcarpeta="qc_limpias")
+        return                  # guardar PNG sin abrir ventanas
 
     ruta = segmentacion.ruta_epocas(a.sujeto)
     if ruta.exists() and not a.rehacer and not a.sesiones:

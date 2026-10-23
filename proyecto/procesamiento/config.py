@@ -52,3 +52,10 @@ CANAL_QC = "Cz"                     # vertex: donde N2 y P2 son maximos
 VENTANA_N2 = (0.12, 0.30)           # s; busqueda del minimo (N2 en mano ~200-250 ms)
 VENTANA_P2 = (0.25, 0.50)           # s; busqueda del maximo (P2 ~300-400 ms)
 UMBRALES_PTP_UV = (100, 150)        # lineas de referencia en la figura de pico a pico
+
+# --- Artefactos sin ICA (artefactos.py) ---------------------------------------
+# Pico a pico medido sobre una copia con pasa-bajos de 30 Hz (banda de los LEPs).
+VENTANA_VEO = (-0.2, 0.8)           # s; parpadeo en esta ventana (N2/P2) -> la epoca se descarta
+UMBRAL_VEO_UV = 100                 # pico a pico maximo de VEO en VENTANA_VEO
+UMBRAL_RECHAZO_UV = 100             # pico a pico maximo en cualquier canal EEG (epoca completa)
+ 
