@@ -35,6 +35,9 @@ NIVELES = {"E1": 1, "E2": 2, "E3": 3, "E4": 4}
 # Esperado en el dataset: 80 pulsos por sujeto, 20 por nivel
 PULSOS_POR_NIVEL = 20
 
+# Frecuencia de muestreo de los datos guardados
+SFREQ_GUARDADO = 250                # Hz; se remuestrea antes de guardar las epocas (None = no remuestrear)
+
 # --- Filtros (filtros.py) ----------------------------------------------------
 PASA_ALTOS_HZ = 1.0
 PASA_BAJOS_HZ = 100.0

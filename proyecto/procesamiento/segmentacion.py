@@ -147,6 +147,8 @@ def ruta_epocas(sub, carpeta=None):
 
 
 def guardar_epocas(ep, sub, carpeta=None):
+    if config.SFREQ_GUARDADO and ep.info["sfreq"] > config.SFREQ_GUARDADO:
+        ep = ep.copy().resample(config.SFREQ_GUARDADO, verbose="ERROR")
     ruta = ruta_epocas(sub, carpeta)
     ruta.parent.mkdir(parents=True, exist_ok=True)
     ep.save(ruta, overwrite=True, verbose="ERROR")
