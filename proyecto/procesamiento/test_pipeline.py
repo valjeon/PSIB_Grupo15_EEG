@@ -65,8 +65,13 @@ def test_un_sujeto_de_punta_a_punta(datos_sinteticos):
     assert n2p2 == sorted(n2p2) and n2p2[0] < n2p2[-1]            # crece con el nivel, como lo inyectamos
     base = salida / "sub-001"
     for nombre in ("sub-001_laser-epo.fif", "sub-001_laser-metadata.csv", "sub-001_limpias-epo.fif",
-                   "sub-001_rechazo.csv", "qc", "qc_limpias", "limpieza"):
+                   "sub-001_rechazo.csv", "sub-001_rasgos.csv", "qc", "qc_limpias", "limpieza"):
         assert (base / nombre).exists(), nombre
+    # rasgos: una fila por ensayo limpio; el N2-P2 medio crece con el nivel
+    r = pd.read_csv(base / "sub-001_rasgos.csv")
+    assert len(r) == 80 and fila["ensayos_con_rasgos"] == 80
+    medias = r.groupby("nivel")["N2P2_uV"].mean()
+    assert medias.is_monotonic_increasing and medias.iloc[-1] > medias.iloc[0]
 
 
 def test_segunda_corrida_reusa_las_epocas(datos_sinteticos, capsys):
@@ -88,6 +93,13 @@ def test_filtro_iir_sale_en_su_subcarpeta(datos_sinteticos):
     fila = pipeline.procesar_sujeto("sub-001", filtro="iir", carpeta=datos_sinteticos, con_qc=False)
     assert fila["filtro"] == "iir" and fila["segmentadas"] == 80
     assert (datos_sinteticos / "iir" / "sub-001" / "sub-001_limpias-epo.fif").exists()
+
+
+def test_main_junta_los_rasgos_de_todos_los_sujetos(datos_sinteticos, monkeypatch):
+    monkeypatch.setattr(config, "CARPETA_SALIDA", datos_sinteticos)
+    assert pipeline.main(["sub-001", "--sin-qc"]) == 0
+    todos = pd.read_csv(datos_sinteticos / "rasgos_todos.csv")
+    assert len(todos) == 80 and todos["sujeto"].unique().tolist() == ["sub-001"]
 
 
 def test_main_devuelve_error_si_falla(datos_sinteticos, monkeypatch):

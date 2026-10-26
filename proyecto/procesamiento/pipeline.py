@@ -6,6 +6,11 @@ Encadena los modulos que ya existen (cada uno se puede seguir corriendo por sepa
     2. qc            figuras de control de las epocas crudas                           -> qc/
     3. artefactos    referencia promedio + rechazo por VEO (en N2/P2) y por EEG        -> <sub>_limpias-epo.fif
     4. qc            figuras de control de las epocas limpias                          -> qc_limpias/
+    5. rasgos        N2-P2 por ensayo en Cz y potencia por bandas                      -> <sub>_rasgos.csv
+
+Al final del lote junta los rasgos de todos los sujetos en rasgos_todos.csv (para el clasificador).
+Los rasgos salen de las epocas limpias guardadas, no del crudo: despues de procesar un sujeto se
+puede borrar su crudo (~1,3 GB) sin perder nada de lo que viene despues.
 
 Y agrega una fila por sujeto a  resumen_pipeline.csv  (en la carpeta de salida): pulsos, epocas que
 quedan por nivel, N2-P2 por nivel y cuanto tardo cada etapa. Sirve para estimar el costo del lote.
@@ -17,6 +22,7 @@ Uso desde la carpeta que contiene `procesamiento/`:
     python -m procesamiento.pipeline sub-001 --rehacer    # volver a segmentar aunque exista el .fif
     python -m procesamiento.pipeline sub-001 --filtro iir # alternativa IIR (sale en <salida>/iir/)
     python -m procesamiento.pipeline sub-001 --sin-qc     # sin figuras (mas rapido)
+    python -m procesamiento.pipeline sub-001 --sin-rasgos # solo hasta las epocas limpias
 
 Si un sujeto falla, el lote sigue con el siguiente y el error queda en el resumen.
 """
@@ -29,7 +35,7 @@ import matplotlib
 import mne
 import pandas as pd
 
-from procesamiento import artefactos, config, datos, filtros, qc, segmentacion
+from procesamiento import artefactos, config, datos, filtros, qc, rasgos, segmentacion
 
 TOTAL_ESPERADO = len(config.NIVELES) * config.PULSOS_POR_NIVEL   # 80 pulsos por sujeto
 
@@ -41,8 +47,8 @@ def carpeta_de_salida(filtro="fir", carpeta=None):
     return base if filtro == "fir" else base / filtro
 
 
-def procesar_sujeto(sub, filtro="fir", rehacer=False, con_qc=True, carpeta=None):
-    """Corre las 4 etapas para un sujeto y devuelve su fila de resumen (dict).
+def procesar_sujeto(sub, filtro="fir", rehacer=False, con_qc=True, carpeta=None, con_rasgos=True):
+    """Corre las 5 etapas para un sujeto y devuelve su fila de resumen (dict).
 
     No captura errores: eso lo hace correr(), para poder seguir con el lote.
     """
@@ -52,37 +58,45 @@ def procesar_sujeto(sub, filtro="fir", rehacer=False, con_qc=True, carpeta=None)
     # 1. segmentacion (lo pesado: lee y filtra las 6 sesiones)
     ruta = segmentacion.ruta_epocas(sub, carpeta)
     if ruta.exists() and not rehacer:
-        print(f"[1/4] Epocas ya existen, se leen (usar --rehacer para volver a segmentar): {ruta}")
+        print(f"[1/5] Epocas ya existen, se leen (usar --rehacer para volver a segmentar): {ruta}")
         ep = mne.read_epochs(ruta, verbose="ERROR")
     else:
-        print(f"[1/4] Segmentando {sub} (filtro {filtro})...")
+        print(f"[1/5] Segmentando {sub} (filtro {filtro})...")
         ep = segmentacion.epocas_sujeto(sub, filtrar=lambda raw: filtros.filtrar(raw, metodo=filtro))
         segmentacion.guardar_epocas(ep, sub, carpeta)
     t_seg = time.time() - t0
 
     # 2. qc de las epocas crudas
     if con_qc:
-        print("[2/4] Control de calidad de las epocas crudas...")
+        print("[2/5] Control de calidad de las epocas crudas...")
         qc.correr_qc(ep, sub, carpeta=carpeta)
     t1 = time.time()
 
     # 3. rechazo de artefactos
-    print("[3/4] Rechazo de artefactos...")
+    print("[3/5] Rechazo de artefactos...")
     _, tabla = artefactos.limpiar_sujeto(sub, carpeta)
     t_lim = time.time() - t1
 
     # 4. qc de las epocas limpias
     n2p2 = {}
     if con_qc:
-        print("[4/4] Control de calidad de las epocas limpias...")
+        print("[4/5] Control de calidad de las epocas limpias...")
         limpias = mne.read_epochs(artefactos.rutas(sub, carpeta)["limpias"], verbose="ERROR")
         resumen = qc.correr_qc(limpias, sub, carpeta=carpeta, subcarpeta="qc_limpias")
         n2p2 = resumen.set_index("condicion")["N2P2_uV"].to_dict()
 
-    return armar_fila(sub, filtro, tabla, n2p2, t_seg, t_lim, time.time() - t0)
+    # 5. rasgos por ensayo (desde las epocas limpias guardadas)
+    n_rasgos, t_ras = 0, 0.0
+    if con_rasgos:
+        print("[5/5] Rasgos por ensayo...")
+        t2 = time.time()
+        n_rasgos = len(rasgos.rasgos_sujeto(sub, carpeta))
+        t_ras = time.time() - t2
+
+    return armar_fila(sub, filtro, tabla, n2p2, t_seg, t_lim, time.time() - t0, n_rasgos, t_ras)
 
 
-def armar_fila(sub, filtro, tabla, n2p2, t_seg, t_lim, t_total):
+def armar_fila(sub, filtro, tabla, n2p2, t_seg, t_lim, t_total, n_rasgos=0, t_ras=0.0):
     """Fila de resumen a partir de la tabla de rechazo de artefactos.limpiar_sujeto."""
     t = tabla.set_index("condicion")
     segmentadas = int(t["antes"].sum())
@@ -101,7 +115,9 @@ def armar_fila(sub, filtro, tabla, n2p2, t_seg, t_lim, t_total):
         fila[f"{c}_limpias"] = int(t["despues"].get(c, 0))
     for c in config.NIVELES:
         fila[f"N2P2_{c}_uV"] = round(float(n2p2[c]), 1) if c in n2p2 else None
-    fila.update(seg_s=round(t_seg, 1), limpieza_s=round(t_lim, 1), total_s=round(t_total, 1))
+    fila["ensayos_con_rasgos"] = n_rasgos
+    fila.update(seg_s=round(t_seg, 1), limpieza_s=round(t_lim, 1), rasgos_s=round(t_ras, 1),
+                total_s=round(t_total, 1))
     return fila
 
 
@@ -118,7 +134,7 @@ def guardar_resumen(filas, carpeta):
     return ruta
 
 
-def correr(sujetos, filtro="fir", rehacer=False, con_qc=True, carpeta=None):
+def correr(sujetos, filtro="fir", rehacer=False, con_qc=True, carpeta=None, con_rasgos=True):
     """Procesa varios sujetos, uno tras otro. Un error en uno no frena a los demas.
 
     El resumen se guarda despues de cada sujeto: si el lote se corta, no se pierde lo hecho.
@@ -129,7 +145,8 @@ def correr(sujetos, filtro="fir", rehacer=False, con_qc=True, carpeta=None):
     for i, sub in enumerate(sujetos, start=1):
         print(f"\n=== {sub} ({i}/{len(sujetos)}) ===")
         try:
-            fila = procesar_sujeto(sub, filtro=filtro, rehacer=rehacer, con_qc=con_qc, carpeta=carpeta)
+            fila = procesar_sujeto(sub, filtro=filtro, rehacer=rehacer, con_qc=con_qc, carpeta=carpeta,
+                                   con_rasgos=con_rasgos)
         except Exception as e:           # un sujeto roto no tiene que tirar el lote
             traceback.print_exc()
             fila = {"sujeto": sub, "filtro": filtro, "estado": f"error: {type(e).__name__}: {e}"}
@@ -160,6 +177,7 @@ def main(argv=None):
     p.add_argument("--filtro", choices=["fir", "iir"], default="fir")
     p.add_argument("--rehacer", action="store_true", help="volver a segmentar aunque exista el .fif")
     p.add_argument("--sin-qc", action="store_true", help="no generar figuras de control")
+    p.add_argument("--sin-rasgos", action="store_true", help="no calcular los rasgos por ensayo")
     a = p.parse_args(argv)
 
     sujetos = datos.listar_sujetos() if a.todos else a.sujetos
@@ -168,8 +186,13 @@ def main(argv=None):
 
     matplotlib.use("Agg")                # solo guardar figuras, sin abrir ventanas
     print("Datos en:", config.RAIZ_DATOS, "| salida:", carpeta_de_salida(a.filtro))
-    filas = correr(sujetos, filtro=a.filtro, rehacer=a.rehacer, con_qc=not a.sin_qc)
+    filas = correr(sujetos, filtro=a.filtro, rehacer=a.rehacer, con_qc=not a.sin_qc,
+                   con_rasgos=not a.sin_rasgos)
     imprimir_resumen(filas)
+    if not a.sin_rasgos and any(f["estado"] == "ok" for f in filas):
+        todos = rasgos.reunir_rasgos(carpeta_de_salida(a.filtro))
+        if todos is not None:
+            print(f"rasgos_todos.csv: {len(todos)} ensayos de {todos['sujeto'].nunique()} sujeto(s)")
     return 0 if all(f["estado"] == "ok" for f in filas) else 1
 
 
