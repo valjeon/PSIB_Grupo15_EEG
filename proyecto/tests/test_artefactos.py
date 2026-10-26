@@ -54,3 +54,14 @@ def test_rechazo_por_veo_solo_en_la_ventana_y_por_eeg():
     assert len(limpio) == N_EP - 11
     assert tabla["rechazadas"].sum() == 11
     assert len(limpio.metadata) == len(limpio)
+
+
+def test_parpadeo_fuera_de_la_ventana_no_se_rechaza_por_eeg():
+    """Un parpadeo grande a +1.5 s (fuera de la ventana de VEO) supera 100 uV en Fp1,
+    pero no debe descartar la epoca: los frontopolares no cuentan para el criterio EEG."""
+    ep = epocas_sinteticas()
+    limpio, tabla, medidas = artefactos.rechazar(ep, umbral_veo_uV=100, ventana_veo=(-0.2, 0.8),
+                                                 umbral_eeg_uV=60)
+    fp1 = artefactos.pico_a_pico_uV(ep, ["Fp1"])
+    assert (fp1[10:20] > 60).all()                         # en Fp1 el parpadeo supera el umbral...
+    assert not medidas["por_eeg"].iloc[10:20].any()        # ...pero no cuenta para el criterio EEG

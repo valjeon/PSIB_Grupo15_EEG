@@ -3,7 +3,9 @@
 Se descarta una epoca si:
     - hay un parpadeo en la ventana critica: VEO con pico a pico > UMBRAL_VEO_UV dentro de
       VENTANA_VEO (ahi estan N2 y P2). Un parpadeo fuera de la ventana no molesta.
-    - hay un artefacto grande en el EEG: pico a pico > UMBRAL_RECHAZO_UV en algun canal.
+    - hay un artefacto grande en el EEG: pico a pico > UMBRAL_RECHAZO_UV en algun canal
+      (sin contar los frontopolares de CANALES_SIN_CRITERIO_EEG: ahi se ven los ojos, y eso ya
+      lo decide VEO; si no, un parpadeo fuera de la ventana critica descartaria la epoca igual).
 No modifica la senal: solo elige que ensayos se usan.
 
 El pico a pico se mide sobre una copia con pasa-bajos de 30 Hz (la banda de los LEPs), igual que
@@ -26,9 +28,9 @@ import numpy as np
 import pandas as pd
 from procesamiento import config, qc, segmentacion
 
-# ---------------------------------------------------------------------------
+
 # Medidas
-# ---------------------------------------------------------------------------
+
 
 def con_referencia_promedio(ep):
     """Copia con referencia promedio (solo canales EEG; VEO queda como esta)."""
@@ -52,9 +54,9 @@ def pico_a_pico_uV(ep, picks="eeg", ventana=None, filtrar=True):
     return (x.max(axis=2) - x.min(axis=2)).max(axis=1) * 1e6
 
 
-# ---------------------------------------------------------------------------
+
 # Rechazo
-# ---------------------------------------------------------------------------
+
 
 def rechazar(ep, umbral_veo_uV=None, ventana_veo=None, umbral_eeg_uV=None, usar_veo=True):
     """Descarta epocas con parpadeo en la ventana critica y/o artefacto grande en el EEG.
@@ -66,8 +68,13 @@ def rechazar(ep, umbral_veo_uV=None, ventana_veo=None, umbral_eeg_uV=None, usar_
     ventana_veo = config.VENTANA_VEO if ventana_veo is None else ventana_veo
     umbral_eeg = config.UMBRAL_RECHAZO_UV if umbral_eeg_uV is None else umbral_eeg_uV
 
+    # El criterio EEG no mira los frontopolares: ahi se ven los ojos, y de eso se encarga VEO.
+    # Si los incluyera, un parpadeo FUERA de la ventana critica descartaria la epoca igual
+    # (paso en sub-002: 73 de 80 epocas rechazadas por Fp1/Fp2).
+    excluir = set(config.CANALES_SIN_CRITERIO_EEG)
+    canales_eeg = [ep.ch_names[i] for i in mne.pick_types(ep.info, eeg=True) if ep.ch_names[i] not in excluir]
     medidas = pd.DataFrame({"condicion": ep.metadata["condicion"].to_numpy(),
-                            "ptp_eeg_uV": pico_a_pico_uV(ep, "eeg")})
+                            "ptp_eeg_uV": pico_a_pico_uV(ep, canales_eeg)})
     tiene_veo = usar_veo and config.CANAL_EOG in ep.ch_names
     medidas["ptp_veo_uV"] = (pico_a_pico_uV(ep, config.CANAL_EOG, ventana_veo) if tiene_veo else np.nan)
     medidas["por_veo"] = medidas["ptp_veo_uV"] > umbral_veo if tiene_veo else False
@@ -88,9 +95,9 @@ def rechazar(ep, umbral_veo_uV=None, ventana_veo=None, umbral_eeg_uV=None, usar_
     return limpio, tabla, medidas
 
 
-# ---------------------------------------------------------------------------
 # Figuras
-# ---------------------------------------------------------------------------
+
+
 
 def fig_antes_despues(antes, despues, canales=("Fp1", "Fz", "Cz"), titulo=""):
     """ERP por nivel con todas las epocas (punteado) y sin las rechazadas (lleno)."""
@@ -141,9 +148,6 @@ def fig_criterios(medidas):
     return fig
 
 
-# ---------------------------------------------------------------------------
-# Orquestacion
-# ---------------------------------------------------------------------------
 
 def rutas(sub, carpeta=None):
     base = Path(config.CARPETA_SALIDA if carpeta is None else carpeta) / sub
