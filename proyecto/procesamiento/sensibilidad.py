@@ -16,8 +16,11 @@ Variantes (VEO = ojo vertical, ventana critica config.VENTANA_VEO; EEG = pico a 
     sin_veo         solo EEG (sin frontales)
     sin_malos       como 'actual' y ademas ignora los electrodos malos de los autores
     sin_malos_150   VEO > 150 uV y EEG sin frontales ni malos de los autores
+    ventana         como 'actual' pero el EEG se mide solo en la ventana que se analiza (VENTANA_EEG, -1 a 1 s:
+                    N2-P2 y rasgos pre/post), no en toda la epoca (-1 a 2 s)
     regresion_veo   NO descarta por VEO: resta de cada canal EEG la parte explicada por el VEO (Gratton);
                     sigue descartando por EEG > 100 uV (sin frontales), ya con la senal corregida
+    regresion_veo_ventana   regresion_veo con el EEG medido solo en VENTANA_EEG
 Las dos ultimas necesitan el CSV de los autores (--csv-autores).
 
 Ademas, 'fuga_veo': correlacion de Spearman (dentro de cada nivel, sin rechazar) entre el pico a pico
@@ -38,19 +41,24 @@ from scipy.stats import spearmanr
 
 from procesamiento import artefactos, config, qc, segmentacion
 
+VENTANA_EEG = (-1.0, 1.0)     # s; tramo de la epoca que se usa de verdad (rasgos pre -1..0 y post 0..1)
 MIN_EPOCAS_NIVEL = 3          # con menos epocas en un nivel no se calcula el N2-P2 de ese nivel
 COL_EXPERIMENTO = 20          # el experimento 6 ocupa las columnas 20..23 del CSV de los autores
 
 # nombre -> (umbral VEO en uV o None para no usar VEO, umbral EEG en uV,
-#            ignorar frontales de config, ignorar electrodos malos de los autores)
+#            ignorar frontales de config, ignorar electrodos malos de los autores,
+#            medir el EEG solo en VENTANA_EEG)
 VARIANTES = {
-    "actual": (100, 100, True, False),
-    "todos_canales": (100, 100, False, False),
-    "veo_150": (150, 100, True, False),
-    "sin_veo": (None, 100, True, False),
-    "sin_malos": (100, 100, True, True),
-    "sin_malos_150": (150, 100, True, True),
+    "actual": (100, 100, True, False, False),
+    "todos_canales": (100, 100, False, False, False),
+    "veo_150": (150, 100, True, False, False),
+    "sin_veo": (None, 100, True, False, False),
+    "sin_malos": (100, 100, True, True, False),
+    "sin_malos_150": (150, 100, True, True, False),
+    "ventana": (100, 100, True, False, True),
 }
+# variantes con la senal corregida por regresion de VEO: nombre -> medir el EEG solo en VENTANA_EEG
+VARIANTES_REGRESION = {"regresion_veo": False, "regresion_veo_ventana": True}
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +93,7 @@ def coeficientes_veo(v):
     """Coeficiente de propagacion del VEO a cada canal EEG (uno por canal), como en Gratton et al. 1983.
 
     Se estima sobre la senal SIN la respuesta evocada: a cada ensayo se le resta el promedio de su nivel,
-    asi no se le pide a la regresion que explique el LEP (que tambien aparece, atenuado, en el VEO).
+    asi la regresion no intenta explicar el LEP (que tambien aparece, atenuado, en el VEO).
     Devuelve (coeficientes, nombres de canales EEG).
     """
     eeg = v.copy().pick("eeg")
@@ -96,7 +104,7 @@ def coeficientes_veo(v):
         i = cond == c
         xr[i] -= x[i].mean(axis=0)
         er[i] -= e[i].mean(axis=0)
-    xr = xr.transpose(1, 0, 2).reshape(x.shape[1], -1)       # canales x (ensayos*tiempo)
+    xr = xr.transpose(1, 0, 2).reshape(x.shape[1], -1)       # canales x (ensayos * tiempo)
     er = er.reshape(-1)
     xr -= xr.mean(axis=1, keepdims=True)
     er = er - er.mean()
@@ -104,7 +112,7 @@ def coeficientes_veo(v):
 
 
 def corregir_con_veo(v):
-    """Copia de `v` con la parte del VEO restada de cada canal EEG. Devuelve (copia, coeficientes)."""
+    """Copia de `v` con la parte del VEO restada de cada canal EEG. Devuelve (copia, {canal: coeficiente})."""
     beta, nombres = coeficientes_veo(v)
     out = v.copy()
     e = v.get_data(picks=config.CANAL_EOG)[:, 0, :]
@@ -129,6 +137,8 @@ def medidas_por_epoca(ep, corregir_veo=False):
     eeg = v.copy().pick("eeg")
     x = eeg.get_data()
     ptp = (x.max(axis=2) - x.min(axis=2)) * 1e6
+    xw = eeg.copy().crop(*VENTANA_EEG).get_data()
+    ptp_ventana = (xw.max(axis=2) - xw.min(axis=2)) * 1e6
     if config.CANAL_EOG in v.ch_names:
         w = v.copy().crop(*config.VENTANA_VEO).get_data(picks=config.CANAL_EOG)[:, 0, :]
         ptp_veo = (w.max(axis=1) - w.min(axis=1)) * 1e6
@@ -139,13 +149,14 @@ def medidas_por_epoca(ep, corregir_veo=False):
     mn = (t >= config.VENTANA_N2[0]) & (t <= config.VENTANA_N2[1])
     mp = (t >= config.VENTANA_P2[0]) & (t <= config.VENTANA_P2[1])
     n2p2 = cz[:, mp].max(axis=1) - cz[:, mn].min(axis=1)
-    return {"v": v, "ptp": ptp, "canales": eeg.ch_names, "ptp_veo": ptp_veo, "n2p2": n2p2, "beta": beta}
+    return {"v": v, "ptp": ptp, "ptp_ventana": ptp_ventana, "canales": eeg.ch_names, "ptp_veo": ptp_veo, "n2p2": n2p2, "beta": beta}
 
 
-def malas_segun_variante(m, umbral_veo, umbral_eeg, ignorar):
-    """Vector booleano: True = la epoca se rechaza."""
+def malas_segun_variante(m, umbral_veo, umbral_eeg, ignorar, ventana=False):
+    """Vector booleano: True = la epoca se rechaza. ventana: medir el EEG solo en VENTANA_EEG."""
     cols = [i for i, c in enumerate(m["canales"]) if c not in set(ignorar)]
-    por_eeg = m["ptp"][:, cols].max(axis=1) > umbral_eeg
+    ptp = m["ptp_ventana"] if ventana else m["ptp"]
+    por_eeg = ptp[:, cols].max(axis=1) > umbral_eeg
     por_veo = (m["ptp_veo"] > umbral_veo) if umbral_veo is not None else np.zeros(len(por_eeg), bool)
     return por_veo | por_eeg
 
@@ -168,52 +179,42 @@ def n2p2_por_nivel(v, mantener):
 # Comparacion
 # ---------------------------------------------------------------------------
 
+def _fila(sub, nombre, malas, m, v, nivel, malas_autores):
+    """Fila de resultados de una variante a partir del vector de epocas rechazadas."""
+    res = n2p2_por_nivel(v, ~malas)
+    fila = {"sujeto": sub, "variante": nombre, "rechazadas": int(malas.sum()), "limpias": int((~malas).sum())}
+    for c in config.NIVELES:
+        fila[f"n_{c}"], fila[f"N2P2_{c}"] = res[c]
+    fila["gradiente_E4_E1"] = fila["N2P2_E4"] - fila["N2P2_E1"]
+    ok = ~malas
+    fila["spearman_nivel_N2P2"] = (spearmanr(nivel[ok], m["n2p2"][ok])[0]
+                                   if ok.sum() >= 8 and len(set(nivel[ok])) > 1 else np.nan)
+    if malas_autores is not None:
+        propias = set(np.flatnonzero(malas))
+        fila["autores_malas"] = len(malas_autores)
+        fila["coinciden"] = len(propias & malas_autores)
+        fila["solo_nuestras"] = len(propias) - fila["coinciden"]
+    return fila
+
+
 def comparar_sujeto(ep, sub, malas_autores=None, electrodos_malos=()):
-    """DataFrame con una fila por variante para este sujeto."""
+    """DataFrame con una fila por variante para este sujeto (y las medidas, para fuga_veo)."""
     m = medidas_por_epoca(ep)
     nivel = ep.metadata["condicion"].map(config.NIVELES).to_numpy()
-    filas = []
     frontales = list(getattr(config, "CANALES_SIN_CRITERIO_EEG", []))
-    for nombre, (uv, ue, con_frontales, con_malos) in VARIANTES.items():
+    filas = []
+    for nombre, (uv, ue, con_frontales, con_malos, ventana) in VARIANTES.items():
         if con_malos and not electrodos_malos:
             continue                      # sin CSV de los autores no se puede calcular
         ignorar = (frontales if con_frontales else []) + (list(electrodos_malos) if con_malos else [])
-        malas = malas_segun_variante(m, uv, ue, ignorar)
-        res = n2p2_por_nivel(m["v"], ~malas)
-        fila = {"sujeto": sub, "variante": nombre, "rechazadas": int(malas.sum()),
-                "limpias": int((~malas).sum())}
-        for c in config.NIVELES:
-            fila[f"n_{c}"], fila[f"N2P2_{c}"] = res[c]
-        fila["gradiente_E4_E1"] = fila["N2P2_E4"] - fila["N2P2_E1"]
-        ok = ~malas
-        fila["spearman_nivel_N2P2"] = (spearmanr(nivel[ok], m["n2p2"][ok])[0]
-                                       if ok.sum() >= 8 and len(set(nivel[ok])) > 1 else np.nan)
-        if malas_autores is not None:
-            propias = set(np.flatnonzero(malas))
-            comun = len(propias & malas_autores)
-            fila["autores_malas"] = len(malas_autores)
-            fila["coinciden"] = comun
-            fila["solo_nuestras"] = len(propias) - comun
-        filas.append(fila)
+        malas = malas_segun_variante(m, uv, ue, ignorar, ventana)
+        filas.append(_fila(sub, nombre, malas, m, m["v"], nivel, malas_autores))
     if config.CANAL_EOG in ep.ch_names:
         mc = medidas_por_epoca(ep, corregir_veo=True)
         m["corregido"] = mc
-        malas = malas_segun_variante(mc, None, 100, frontales)
-        res = n2p2_por_nivel(mc["v"], ~malas)
-        fila = {"sujeto": sub, "variante": "regresion_veo", "rechazadas": int(malas.sum()),
-                "limpias": int((~malas).sum())}
-        for c in config.NIVELES:
-            fila[f"n_{c}"], fila[f"N2P2_{c}"] = res[c]
-        fila["gradiente_E4_E1"] = fila["N2P2_E4"] - fila["N2P2_E1"]
-        ok = ~malas
-        fila["spearman_nivel_N2P2"] = (spearmanr(nivel[ok], mc["n2p2"][ok])[0]
-                                       if ok.sum() >= 8 and len(set(nivel[ok])) > 1 else np.nan)
-        if malas_autores is not None:
-            propias = set(np.flatnonzero(malas))
-            fila["autores_malas"] = len(malas_autores)
-            fila["coinciden"] = len(propias & malas_autores)
-            fila["solo_nuestras"] = len(propias) - fila["coinciden"]
-        filas.append(fila)
+        for nombre, ventana in VARIANTES_REGRESION.items():
+            malas = malas_segun_variante(mc, None, 100, frontales, ventana)
+            filas.append(_fila(sub, nombre, malas, mc, mc["v"], nivel, malas_autores))
     return pd.DataFrame(filas), m
 
 

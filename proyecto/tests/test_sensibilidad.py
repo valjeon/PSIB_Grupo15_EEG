@@ -106,3 +106,16 @@ def test_coeficiente_recupera_la_propagacion_conocida():
     corr, _ = sensibilidad.corregir_con_veo(v)
     dc = corr.get_data(picks="Cz")[:, 0, :]
     assert np.corrcoef(dc.ravel(), veo.ravel())[0, 1] < 0.1     # ya no queda parpadeo en Cz
+
+
+def test_ventana_ignora_artefactos_fuera_de_la_ventana_analizada():
+    """Un salto a 1.5 s en un canal no frontal descarta la epoca con 'actual' pero no con 'ventana'."""
+    e = hacer_epocas()
+    d = e.get_data()
+    t = e.times
+    d[5, CANALES.index("T8")] += 400e-6 * np.exp(-((t - 1.5) / 0.05) ** 2)
+    e2 = mne.EpochsArray(d, e.info, tmin=-1.0, baseline=None, verbose="ERROR")
+    e2.metadata = e.metadata
+    por = sensibilidad.comparar_sujeto(e2, "sub-x")[0].set_index("variante")
+    assert por.loc["ventana", "rechazadas"] == por.loc["actual", "rechazadas"] - 1
+    assert por.loc["regresion_veo_ventana", "rechazadas"] <= por.loc["regresion_veo", "rechazadas"]
