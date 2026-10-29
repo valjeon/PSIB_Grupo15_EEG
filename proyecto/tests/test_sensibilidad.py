@@ -119,3 +119,56 @@ def test_ventana_ignora_artefactos_fuera_de_la_ventana_analizada():
     por = sensibilidad.comparar_sujeto(e2, "sub-x")[0].set_index("variante")
     assert por.loc["ventana", "rechazadas"] == por.loc["actual", "rechazadas"] - 1
     assert por.loc["regresion_veo_ventana", "rechazadas"] <= por.loc["regresion_veo", "rechazadas"]
+
+
+def test_veo_residual_no_marca_la_respuesta_ligada_al_estimulo():
+    """Una onda de 140 uV pico a pico en el VEO, igual en todas las epocas, no es un parpadeo."""
+    e = hacer_epocas()
+    d = e.get_data()
+    t = e.times
+    d[:, CANALES.index("VEO")] += 70e-6 * np.sin(2 * np.pi * 3 * t) * ((t > 0.1) & (t < 0.6))
+    e2 = mne.EpochsArray(d, e.info, tmin=-1.0, baseline=None, verbose="ERROR")
+    e2.metadata = e.metadata
+    por = sensibilidad.comparar_sujeto(e2, "sub-x")[0].set_index("variante")
+    assert por.loc["ventana", "rechazadas"] > 60                          # casi todas por 'VEO'
+    assert por.loc["ventana_veo_residual", "rechazadas"] <= 3             # quedan las de verdad
+
+
+def test_lejanos_ignora_canales_cerca_de_los_ojos():
+    e = hacer_epocas()
+    d = e.get_data()
+    t = e.times
+    d[7, CANALES.index("Fz")] += 400e-6 * np.exp(-((t - 0.3) / 0.05) ** 2)
+    e2 = mne.EpochsArray(d, e.info, tmin=-1.0, baseline=None, verbose="ERROR")
+    e2.metadata = e.metadata
+    por = sensibilidad.comparar_sujeto(e2, "sub-x")[0].set_index("variante")
+    assert por.loc["ventana", "rechazadas"] == por.loc["ventana_lejanos", "rechazadas"] + 1
+    assert "F7" in sensibilidad.canales_cerca_de_los_ojos(["F7", "Fz", "Cz", "Pz", "T8"])
+    assert "Cz" not in sensibilidad.canales_cerca_de_los_ojos(["F7", "Fz", "Cz", "Pz", "T8"])
+
+
+def test_parpadeo_fuera_del_tramo_n2p2_no_descarta_con_veo_n2p2():
+    """Un parpadeo en el VEO a +0.7 s (dentro de la ventana de VEO pero despues de N2/P2) descarta la epoca
+    con 'ventana' pero no con 'veo_n2p2'."""
+    e = hacer_epocas()
+    d = e.get_data()
+    t = e.times
+    d[9, CANALES.index("VEO")] += 400e-6 * np.exp(-((t - 0.7) / 0.05) ** 2)
+    e2 = mne.EpochsArray(d, e.info, tmin=-1.0, baseline=None, verbose="ERROR")
+    e2.metadata = e.metadata
+    por = sensibilidad.comparar_sujeto(e2, "sub-x")[0].set_index("variante")
+    assert por.loc["veo_n2p2", "rechazadas"] <= por.loc["ventana", "rechazadas"] - 1
+
+
+def test_solo_cz_mira_unicamente_cz():
+    """Un salto en T8 descarta la epoca con 'ventana' pero no con 'solo_cz'; uno en Cz descarta en las dos."""
+    e = hacer_epocas()
+    d = e.get_data()
+    t = e.times
+    d[11, CANALES.index("T8")] += 400e-6 * np.exp(-((t - 0.3) / 0.05) ** 2)
+    d[12, CANALES.index("Cz")] += 400e-6 * np.exp(-((t - 0.3) / 0.05) ** 2)
+    e2 = mne.EpochsArray(d, e.info, tmin=-1.0, baseline=None, verbose="ERROR")
+    e2.metadata = e.metadata
+    por = sensibilidad.comparar_sujeto(e2, "sub-x")[0].set_index("variante")
+    assert por.loc["solo_cz", "rechazadas"] < por.loc["ventana", "rechazadas"]
+    assert por.loc["solo_cz", "rechazadas"] >= 1                           # la de Cz sigue descartada

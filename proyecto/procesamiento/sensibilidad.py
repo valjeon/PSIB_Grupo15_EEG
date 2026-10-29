@@ -18,6 +18,16 @@ Variantes (VEO = ojo vertical, ventana critica config.VENTANA_VEO; EEG = pico a 
     sin_malos_150   VEO > 150 uV y EEG sin frontales ni malos de los autores
     ventana         como 'actual' pero el EEG se mide solo en la ventana que se analiza (VENTANA_EEG, -1 a 1 s:
                     N2-P2 y rasgos pre/post), no en toda la epoca (-1 a 2 s)
+    ventana_veo_residual   como 'ventana' pero el VEO se mide sin la parte ligada al estimulo (se le resta el VEO
+                    promedio de su nivel): el VEO tambien registra el LEP, y eso no es un parpadeo
+    ventana_lejanos        como 'ventana' pero el criterio de EEG solo mira canales a menos de Y_MAX_LEJANOS_MM
+                    hacia adelante (centro y parte posterior de la cabeza), lejos de los ojos
+    ventana_veo_residual_lejanos   las dos cosas a la vez
+    solo_cz         se mira solo Cz: descarta si el pico a pico de Cz (en VENTANA_EEG) supera el umbral; no usa VEO
+    solo_cz_veo_residual   lo mismo y ademas descarta por VEO sin la parte ligada al estimulo
+    veo_n2p2        como 'ventana' pero el VEO se mira solo en VENTANA_N2P2 (0.12 a 0.5 s): un parpadeo fuera del
+                    tramo donde se miden N2 y P2 no descarta la epoca (aproxima "recortar el intervalo del parpadeo")
+    veo_residual_n2p2   lo mismo con el VEO sin la parte ligada al estimulo
     regresion_veo   NO descarta por VEO: resta de cada canal EEG la parte explicada por el VEO (Gratton);
                     sigue descartando por EEG > 100 uV (sin frontales), ya con la senal corregida
     regresion_veo_ventana   regresion_veo con el EEG medido solo en VENTANA_EEG
@@ -40,22 +50,39 @@ import pandas as pd
 from scipy.stats import spearmanr
 
 from procesamiento import artefactos, config, qc, segmentacion
+from procesamiento.ver_senal import posicion_y, veo_ptp, veo_ptp_sin_evocada
 
-VENTANA_EEG = (-1.0, 1.0)     # s; tramo de la epoca que se usa de verdad (rasgos pre -1..0 y post 0..1)
+VENTANA_EEG = getattr(config, "VENTANA_EEG", None) or (-1.0, 1.0)   # s; tramo que se usa de verdad (pre -1..0, post 0..1)
+# tramo donde N2 y P2 se miden (union de VENTANA_N2 y VENTANA_P2): un parpadeo fuera de ahi no afecta el N2-P2
+VENTANA_N2P2 = (min(config.VENTANA_N2[0], config.VENTANA_P2[0]), max(config.VENTANA_N2[1], config.VENTANA_P2[1]))
+Y_MAX_LEJANOS_MM = 30         # canales mas adelantados que esto (Fz, F*, AF*, Fp*) se consideran cerca de los ojos
 MIN_EPOCAS_NIVEL = 3          # con menos epocas en un nivel no se calcula el N2-P2 de ese nivel
 COL_EXPERIMENTO = 20          # el experimento 6 ocupa las columnas 20..23 del CSV de los autores
 
-# nombre -> (umbral VEO en uV o None para no usar VEO, umbral EEG en uV,
-#            ignorar frontales de config, ignorar electrodos malos de los autores,
-#            medir el EEG solo en VENTANA_EEG)
+def _v(uv=100, ue=100, frontales=True, malos=False, ventana=False, residual=False, lejanos=False, n2p2=False,
+       solo_cz=False):
+    """Definicion de una variante: umbral VEO (None = sin VEO), umbral EEG, ignorar frontales de config,
+    ignorar electrodos malos de los autores, medir el EEG solo en VENTANA_EEG, usar el VEO sin la parte
+    evocada, mirar solo los canales lejanos a los ojos, mirar el VEO solo en VENTANA_N2P2, y mirar solo el canal CANAL_QC (Cz) en el criterio de EEG."""
+    return dict(uv=uv, ue=ue, frontales=frontales, malos=malos, ventana=ventana, residual=residual,
+                lejanos=lejanos, n2p2=n2p2, solo_cz=solo_cz)
+
+
 VARIANTES = {
-    "actual": (100, 100, True, False, False),
-    "todos_canales": (100, 100, False, False, False),
-    "veo_150": (150, 100, True, False, False),
-    "sin_veo": (None, 100, True, False, False),
-    "sin_malos": (100, 100, True, True, False),
-    "sin_malos_150": (150, 100, True, True, False),
-    "ventana": (100, 100, True, False, True),
+    "actual": _v(),
+    "todos_canales": _v(frontales=False),
+    "veo_150": _v(uv=150),
+    "sin_veo": _v(uv=None),
+    "sin_malos": _v(malos=True),
+    "sin_malos_150": _v(uv=150, malos=True),
+    "ventana": _v(ventana=True),
+    "ventana_veo_residual": _v(ventana=True, residual=True),
+    "ventana_lejanos": _v(ventana=True, lejanos=True),
+    "ventana_veo_residual_lejanos": _v(ventana=True, residual=True, lejanos=True),
+    "veo_n2p2": _v(ventana=True, n2p2=True),
+    "veo_residual_n2p2": _v(ventana=True, residual=True, n2p2=True),
+    "solo_cz": _v(uv=None, ventana=True, solo_cz=True),
+    "solo_cz_veo_residual": _v(ventana=True, residual=True, solo_cz=True),
 }
 # variantes con la senal corregida por regresion de VEO: nombre -> medir el EEG solo en VENTANA_EEG
 VARIANTES_REGRESION = {"regresion_veo": False, "regresion_veo_ventana": True}
@@ -142,22 +169,38 @@ def medidas_por_epoca(ep, corregir_veo=False):
     if config.CANAL_EOG in v.ch_names:
         w = v.copy().crop(*config.VENTANA_VEO).get_data(picks=config.CANAL_EOG)[:, 0, :]
         ptp_veo = (w.max(axis=1) - w.min(axis=1)) * 1e6
+        ptp_veo_residual = veo_ptp_sin_evocada(v)
+        ptp_veo_n2p2 = veo_ptp(v, VENTANA_N2P2)
+        ptp_veo_residual_n2p2 = veo_ptp_sin_evocada(v, VENTANA_N2P2)
     else:
-        ptp_veo = np.full(len(v), np.nan)
+        ptp_veo = ptp_veo_residual = ptp_veo_n2p2 = ptp_veo_residual_n2p2 = np.full(len(v), np.nan)
     cz = v.get_data(picks=config.CANAL_QC)[:, 0, :] * 1e6
     t = v.times
     mn = (t >= config.VENTANA_N2[0]) & (t <= config.VENTANA_N2[1])
     mp = (t >= config.VENTANA_P2[0]) & (t <= config.VENTANA_P2[1])
     n2p2 = cz[:, mp].max(axis=1) - cz[:, mn].min(axis=1)
-    return {"v": v, "ptp": ptp, "ptp_ventana": ptp_ventana, "canales": eeg.ch_names, "ptp_veo": ptp_veo, "n2p2": n2p2, "beta": beta}
+    return {"v": v, "ptp": ptp, "ptp_ventana": ptp_ventana, "canales": eeg.ch_names, "ptp_veo": ptp_veo,
+            "ptp_veo_residual": ptp_veo_residual, "ptp_veo_n2p2": ptp_veo_n2p2,
+            "ptp_veo_residual_n2p2": ptp_veo_residual_n2p2, "n2p2": n2p2, "beta": beta}
 
 
-def malas_segun_variante(m, umbral_veo, umbral_eeg, ignorar, ventana=False):
-    """Vector booleano: True = la epoca se rechaza. ventana: medir el EEG solo en VENTANA_EEG."""
+def canales_cerca_de_los_ojos(nombres, y_max_mm=None):
+    """Canales mas adelantados que y_max_mm (por defecto Y_MAX_LEJANOS_MM). Los que no tienen posicion no se tocan."""
+    y_max = Y_MAX_LEJANOS_MM if y_max_mm is None else y_max_mm
+    y = posicion_y(nombres) * 1000
+    return [n for n, yy in zip(nombres, y) if np.isfinite(yy) and yy > y_max]
+
+
+def malas_segun_variante(m, umbral_veo, umbral_eeg, ignorar, ventana=False, residual=False, n2p2=False):
+    """Vector booleano: True = la epoca se rechaza.
+
+    ventana: medir el EEG solo en VENTANA_EEG. residual: medir el VEO sin la parte ligada al estimulo.
+    """
     cols = [i for i, c in enumerate(m["canales"]) if c not in set(ignorar)]
     ptp = m["ptp_ventana"] if ventana else m["ptp"]
     por_eeg = ptp[:, cols].max(axis=1) > umbral_eeg
-    por_veo = (m["ptp_veo"] > umbral_veo) if umbral_veo is not None else np.zeros(len(por_eeg), bool)
+    ptp_veo = m["ptp_veo" + ("_residual" if residual else "") + ("_n2p2" if n2p2 else "")]
+    por_veo = (ptp_veo > umbral_veo) if umbral_veo is not None else np.zeros(len(por_eeg), bool)
     return por_veo | por_eeg
 
 
@@ -203,11 +246,14 @@ def comparar_sujeto(ep, sub, malas_autores=None, electrodos_malos=()):
     nivel = ep.metadata["condicion"].map(config.NIVELES).to_numpy()
     frontales = list(getattr(config, "CANALES_SIN_CRITERIO_EEG", []))
     filas = []
-    for nombre, (uv, ue, con_frontales, con_malos, ventana) in VARIANTES.items():
-        if con_malos and not electrodos_malos:
+    cerca_ojos = canales_cerca_de_los_ojos(m["canales"])
+    for nombre, d in VARIANTES.items():
+        if d["malos"] and not electrodos_malos:
             continue                      # sin CSV de los autores no se puede calcular
-        ignorar = (frontales if con_frontales else []) + (list(electrodos_malos) if con_malos else [])
-        malas = malas_segun_variante(m, uv, ue, ignorar, ventana)
+        ignorar = ((frontales if d["frontales"] else []) + (list(electrodos_malos) if d["malos"] else [])
+                   + (cerca_ojos if d["lejanos"] else [])
+                   + ([c for c in m["canales"] if c != config.CANAL_QC] if d["solo_cz"] else []))
+        malas = malas_segun_variante(m, d["uv"], d["ue"], ignorar, d["ventana"], d["residual"], d["n2p2"])
         filas.append(_fila(sub, nombre, malas, m, m["v"], nivel, malas_autores))
     if config.CANAL_EOG in ep.ch_names:
         mc = medidas_por_epoca(ep, corregir_veo=True)
