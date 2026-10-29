@@ -59,13 +59,17 @@ Y_MAX_LEJANOS_MM = 30         # canales mas adelantados que esto (Fz, F*, AF*, F
 MIN_EPOCAS_NIVEL = 3          # con menos epocas en un nivel no se calcula el N2-P2 de ese nivel
 COL_EXPERIMENTO = 20          # el experimento 6 ocupa las columnas 20..23 del CSV de los autores
 
+CANALES_CENTRALES_CRITERIO = ("Cz", "C3", "C4")   # variante `centrales`: lejos de los ojos, N2-P2 visible
+
+
 def _v(uv=100, ue=100, frontales=True, malos=False, ventana=False, residual=False, lejanos=False, n2p2=False,
-       solo_cz=False):
+       solo_cz=False, centrales=False):
     """Definicion de una variante: umbral VEO (None = sin VEO), umbral EEG, ignorar frontales de config,
     ignorar electrodos malos de los autores, medir el EEG solo en VENTANA_EEG, usar el VEO sin la parte
-    evocada, mirar solo los canales lejanos a los ojos, mirar el VEO solo en VENTANA_N2P2, y mirar solo el canal CANAL_QC (Cz) en el criterio de EEG."""
+    evocada, mirar solo los canales lejanos a los ojos, mirar el VEO solo en VENTANA_N2P2, y mirar solo el canal CANAL_QC (Cz) en el criterio de EEG,
+    o solo CANALES_CENTRALES_CRITERIO (Cz, C3, C4)."""
     return dict(uv=uv, ue=ue, frontales=frontales, malos=malos, ventana=ventana, residual=residual,
-                lejanos=lejanos, n2p2=n2p2, solo_cz=solo_cz)
+                lejanos=lejanos, n2p2=n2p2, solo_cz=solo_cz, centrales=centrales)
 
 
 VARIANTES = {
@@ -83,6 +87,7 @@ VARIANTES = {
     "veo_residual_n2p2": _v(ventana=True, residual=True, n2p2=True),
     "solo_cz": _v(uv=None, ventana=True, solo_cz=True),
     "solo_cz_veo_residual": _v(ventana=True, residual=True, solo_cz=True),
+    "centrales": _v(uv=None, ventana=True, centrales=True),
 }
 # variantes con la senal corregida por regresion de VEO: nombre -> medir el EEG solo en VENTANA_EEG
 VARIANTES_REGRESION = {"regresion_veo": False, "regresion_veo_ventana": True}
@@ -252,7 +257,8 @@ def comparar_sujeto(ep, sub, malas_autores=None, electrodos_malos=()):
             continue                      # sin CSV de los autores no se puede calcular
         ignorar = ((frontales if d["frontales"] else []) + (list(electrodos_malos) if d["malos"] else [])
                    + (cerca_ojos if d["lejanos"] else [])
-                   + ([c for c in m["canales"] if c != config.CANAL_QC] if d["solo_cz"] else []))
+                   + ([c for c in m["canales"] if c != config.CANAL_QC] if d["solo_cz"] else [])
+                   + ([c for c in m["canales"] if c not in CANALES_CENTRALES_CRITERIO] if d["centrales"] else []))
         malas = malas_segun_variante(m, d["uv"], d["ue"], ignorar, d["ventana"], d["residual"], d["n2p2"])
         filas.append(_fila(sub, nombre, malas, m, m["v"], nivel, malas_autores))
     if config.CANAL_EOG in ep.ch_names:
